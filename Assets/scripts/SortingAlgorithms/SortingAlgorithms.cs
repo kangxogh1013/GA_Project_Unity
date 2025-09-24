@@ -18,7 +18,7 @@ public class SortingAlgorithmsUI : MonoBehaviour
 
     void OnCompareSorts()
     {
-        int[] data1 = GenerateRandomArray(50000);
+        int[] data1 = GenerateRandomArray(20000);
         int[] data2 = (int[])data1.Clone();
         int[] data3 = (int[])data1.Clone();
         Stopwatch sw = new Stopwatch();
