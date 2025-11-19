@@ -1,199 +1,380 @@
-using System.Collections;
+ï»¿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
 
 public class MazeGenerator : MonoBehaviour
 {
-    public int mazeWidth = 21;      // È¦¼ö ±ÇÀå (21, 31, 41 µî)
-    public int mazeHeight = 21;     // È¦¼ö ±ÇÀå
+    [Header("ë¯¸ë¡œ ì„¤ì •")]
+    public int width = 15;
+    public int height = 15;
 
-    private int[,] maze;            // 1=º®, 0=±æ
-    private bool[,] visited;        // ¹æ¹® ±â·Ï
-    private List<Vector2Int> solutionPath; // ÇØ´ä °æ·Î
-    private Vector2Int start = Vector2Int.zero;
-    private Vector2Int goal = Vector2Int.zero;
+    [Header("ì‹œê°í™”")]
+    public GameObject cellPrefab;
+    public Transform mazeParent;
+    public float cellSize = 1f;
+    public float moveSpeed = 0.2f;  // ì´ë™ ì†ë„ (Inspectorì—ì„œ ì¡°ì ˆ)
+    public Camera mainCamera;  // ë©”ì¸ ì¹´ë©”ë¼
+
+    [Header("UI ìš”ì†Œ")]
+    public Button generateButton;
+    public Button showPathButton;
+    public Button autoMoveButton;
+
+    private int[,] map;
+    private Vector2Int start;
+    private Vector2Int goal;
+    private List<Vector2Int> shortestPath;
+    private GameObject playerObject;
+    private Dictionary<Vector2Int, GameObject> cellObjects = new Dictionary<Vector2Int, GameObject>();
+    private List<GameObject> pathMarkers = new List<GameObject>();  // ê²½ë¡œ í‘œì‹œ íë¸Œë“¤
+    private Coroutine moveCoroutine;
+
+    Vector2Int[] dirs = {
+        new Vector2Int(1, 0),
+        new Vector2Int(-1, 0),
+        new Vector2Int(0, 1),
+        new Vector2Int(0, -1)
+    };
 
     void Start()
     {
-        GenerateNewMaze();
+        // ì¹´ë©”ë¼ ìë™ ì°¾ê¸°
+        if (mainCamera == null)
+            mainCamera = Camera.main;
+
+        generateButton.onClick.AddListener(GenerateNewMaze);
+        showPathButton.onClick.AddListener(ShowShortestPath);
+        autoMoveButton.onClick.AddListener(AutoMove);
+
+        showPathButton.interactable = false;
+        autoMoveButton.interactable = false;
     }
 
-    void Update()
+    public void GenerateNewMaze()
     {
-        if (Input.GetKeyDown(KeyCode.Space))
+        // ì´ë™ ì¤‘ì´ë©´ ì½”ë£¨í‹´ ì¤‘ì§€
+        if (moveCoroutine != null)
         {
-            GenerateNewMaze();
+            StopCoroutine(moveCoroutine);
+            moveCoroutine = null;
+            autoMoveButton.interactable = true;
+            Debug.Log("í”Œë ˆì´ì–´ ì´ë™ ì¤‘ì§€!");
         }
-        if (Input.GetKeyDown(KeyCode.R))
+
+        if (width % 2 == 0) width++;
+        if (height % 2 == 0) height++;
+
+        int attempts = 0;
+
+        while (attempts < 100)
         {
-            FindAndDrawPath();
-        }
-    }
+            attempts++;
 
-    void GenerateNewMaze()
-    {
-        // ¸Ê Å©±â°¡ È¦¼öÀÎÁö È®ÀÎ
-        if (mazeWidth % 2 == 0) mazeWidth++;
-        if (mazeHeight % 2 == 0) mazeHeight++;
+            map = new int[height, width];
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    map[y, x] = 1;
 
-        maze = new int[mazeHeight, mazeWidth];
-        visited = new bool[mazeHeight, mazeWidth];
-        solutionPath = new List<Vector2Int>();
+            CreateComplexMaze(1, 1);
+            AddManyRandomPaths();
 
-        // ¸ğµç ¼¿À» º®À¸·Î ÃÊ±âÈ­
-        InitializeMaze();
+            start = new Vector2Int(1, 1);
+            goal = new Vector2Int(width - 2, height - 2);
+            map[start.y, start.x] = 0;
+            map[goal.y, goal.x] = 0;
 
-        // ¹Ì·Î »ı¼º (Recursive Backtracking »ç¿ë)
-        GenerateMazeRecursive(1, 1);
-
-        // ½ÃÀÛ°ú ³¡ Æ÷ÀÎÆ® ¼³Á¤
-        start = new Vector2Int(1, 1);
-        goal = new Vector2Int(mazeWidth - 2, mazeHeight - 2);
-
-        maze[start.y, start.x] = 0;
-        maze[goal.y, goal.x] = 0;
-
-        // Å»Ãâ °¡´É ¿©ºÎ È®ÀÎ
-        visited = new bool[mazeHeight, mazeWidth];
-        bool canEscape = SearchMaze(start.x, start.y, false);
-
-        if (!canEscape)
-        {
-            Debug.Log("Å»Ãâ ºÒ°¡´ÉÇÑ ¹Ì·Î - »õ·Î »ı¼ºÇÕ´Ï´Ù.");
-            GenerateNewMaze(); // Àç±ÍÀûÀ¸·Î »õ ¹Ì·Î »ı¼º
-        }
-        else
-        {
-            Debug.Log($"¹Ì·Î »ı¼ºµÊ: {mazeWidth}x{mazeHeight}");
-
-            // ½Ã°¢È­ ¾÷µ¥ÀÌÆ®
-            GetComponent<MazeVisualizer>().UpdateVisualization();
-        }
-    }
-
-    void InitializeMaze()
-    {
-        for (int y = 0; y < mazeHeight; y++)
-        {
-            for (int x = 0; x < mazeWidth; x++)
+            if (CanEscape())
             {
-                maze[y, x] = 1; // ¸ğµÎ º®À¸·Î
+                Debug.Log($"íƒˆì¶œ ê°€ëŠ¥í•œ ë¯¸ë¡œ ìƒì„± ì™„ë£Œ! ({attempts}íšŒ)");
+                shortestPath = FindPathBFS();
+                DrawMaze();
+                AdjustCameraToMaze();
+                showPathButton.interactable = true;
+                autoMoveButton.interactable = true;
+                return;
+            }
+        }
+
+        Debug.LogError("ë¯¸ë¡œ ìƒì„± ì‹¤íŒ¨!");
+    }
+
+    void AdjustCameraToMaze()
+    {
+        if (mainCamera == null) return;
+
+        float centerX = (width - 1) * cellSize * 0.5f;
+        float centerZ = (height - 1) * cellSize * 0.5f;
+        float maxSize = Mathf.Max(width, height);
+        float cameraHeight = maxSize * cellSize * 0.8f;
+        float cameraDistance = maxSize * cellSize * 0.6f;
+
+        mainCamera.transform.position = new Vector3(centerX, cameraHeight, centerZ - cameraDistance);
+        mainCamera.transform.LookAt(new Vector3(centerX, 0, centerZ));
+    }
+
+    void CreateComplexMaze(int x, int y)
+    {
+        map[y, x] = 0;
+
+        List<Vector2Int> directions = new List<Vector2Int>(dirs);
+        for (int i = 0; i < directions.Count; i++)
+        {
+            int j = Random.Range(i, directions.Count);
+            Vector2Int temp = directions[i];
+            directions[i] = directions[j];
+            directions[j] = temp;
+        }
+
+        foreach (var dir in directions)
+        {
+            int nx = x + dir.x * 2;
+            int ny = y + dir.y * 2;
+
+            if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && map[ny, nx] == 1)
+            {
+                map[y + dir.y, x + dir.x] = 0;
+                CreateComplexMaze(nx, ny);
             }
         }
     }
 
-    // Recursive BacktrackingÀ» ÀÌ¿ëÇÑ ¹Ì·Î »ı¼º
-    void GenerateMazeRecursive(int x, int y)
+    void AddManyRandomPaths()
     {
-        maze[y, x] = 0; // ÇöÀç ¼¿À» ±æ·Î ¼³Á¤
+        int extraPaths = (width * height) / 8;
 
-        // 4°¡Áö ¹æÇâÀ» ·£´ıÇÏ°Ô ¼¯±â
-        int[] directions = { 0, 1, 2, 3 }; // 0=»ó, 1=¿ì, 2=ÇÏ, 3=ÁÂ
-        ShuffleArray(directions);
-
-        foreach (int dir in directions)
+        for (int i = 0; i < extraPaths; i++)
         {
-            int nx = x;
-            int ny = y;
+            int x = Random.Range(1, width - 1);
+            int y = Random.Range(1, height - 1);
 
-            // 2Ä­ ¾ÕÀÇ ÁÂÇ¥ °è»ê
-            switch (dir)
+            if (map[y, x] == 1)
             {
-                case 0: ny -= 2; break; // À§
-                case 1: nx += 2; break; // ¿À¸¥ÂÊ
-                case 2: ny += 2; break; // ¾Æ·¡
-                case 3: nx -= 2; break; // ¿ŞÂÊ
+                if (Random.value > 0.3f)
+                {
+                    map[y, x] = 0;
+
+                    if (Random.value > 0.5f)
+                    {
+                        Vector2Int randomDir = dirs[Random.Range(0, dirs.Length)];
+                        int nx = x + randomDir.x;
+                        int ny = y + randomDir.y;
+
+                        if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1)
+                            map[ny, nx] = 0;
+                    }
+                }
             }
+        }
 
-            // ¹üÀ§ Ã¼Å© ¹× ¹Ì¹æ¹® Ã¼Å©
-            if (nx > 0 && ny > 0 && nx < mazeWidth - 1 && ny < mazeHeight - 1 && maze[ny, nx] == 1)
+        for (int y = 2; y < height - 2; y++)
+        {
+            for (int x = 2; x < width - 2; x++)
             {
-                // »çÀÌÀÇ º®À» ºÎ¼ö±â
-                maze[y + (ny - y) / 2, x + (nx - x) / 2] = 0;
-                // Àç±Í È£Ãâ
-                GenerateMazeRecursive(nx, ny);
+                if (map[y, x] == 0 && Random.value > 0.85f)
+                {
+                    Vector2Int randomDir = dirs[Random.Range(0, dirs.Length)];
+                    int nx = x + randomDir.x;
+                    int ny = y + randomDir.y;
+
+                    if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && map[ny, nx] == 1)
+                        map[ny, nx] = 0;
+                }
             }
         }
     }
 
-    // ¹è¿­ ¼ÅÇÃ (Fisher-Yates)
-    void ShuffleArray(int[] array)
+    bool CanEscape()
     {
-        for (int i = array.Length - 1; i > 0; i--)
-        {
-            int randomIdx = Random.Range(0, i + 1);
-            // Swap
-            int temp = array[i];
-            array[i] = array[randomIdx];
-            array[randomIdx] = temp;
-        }
+        bool[,] visited = new bool[height, width];
+        return DFS(start.x, start.y, visited);
     }
 
-    // ¹éÆ®·¡Å·À» ÀÌ¿ëÇÑ ¹Ì·Î Å½»ö
-    bool SearchMaze(int x, int y, bool drawPath)
+    bool DFS(int x, int y, bool[,] visited)
     {
-        // ¹üÀ§/º®/Àç¹æ¹® Ã¼Å©
-        if (x < 0 || y < 0 || x >= mazeWidth || y >= mazeHeight) return false;
-        if (maze[y, x] == 1 || visited[y, x]) return false;
+        if (x == goal.x && y == goal.y) return true;
+        if (x < 0 || x >= width || y < 0 || y >= height) return false;
+        if (map[y, x] == 1 || visited[y, x]) return false;
 
-        // ¹æ¹® Ç¥½Ã
         visited[y, x] = true;
 
-        if (drawPath)
-        {
-            solutionPath.Add(new Vector2Int(x, y));
-        }
-
-        // ¸ñÇ¥ µµ´Ş?
-        if (x == goal.x && y == goal.y) return true;
-
-        // 4¹æÇâ Å½»ö (»ó, ¿ì, ÇÏ, ÁÂ)
-        if (SearchMaze(x, y - 1, drawPath)) return true;  // À§
-        if (SearchMaze(x + 1, y, drawPath)) return true;  // ¿À¸¥ÂÊ
-        if (SearchMaze(x, y + 1, drawPath)) return true;  // ¾Æ·¡
-        if (SearchMaze(x - 1, y, drawPath)) return true;  // ¿ŞÂÊ
-
-        // ¸·ÇûÀ¸¸é °æ·Î¿¡¼­ Á¦°Å
-        if (drawPath && solutionPath.Count > 0)
-        {
-            solutionPath.RemoveAt(solutionPath.Count - 1);
-        }
+        foreach (var dir in dirs)
+            if (DFS(x + dir.x, y + dir.y, visited))
+                return true;
 
         return false;
     }
 
-    void FindAndDrawPath()
+    List<Vector2Int> FindPathBFS()
     {
-        solutionPath.Clear();
-        visited = new bool[mazeHeight, mazeWidth];
-        bool found = SearchMaze(start.x, start.y, true);
+        bool[,] visited = new bool[height, width];
+        Vector2Int?[,] parent = new Vector2Int?[height, width];
+        Queue<Vector2Int> q = new Queue<Vector2Int>();
 
-        if (found)
+        q.Enqueue(start);
+        visited[start.y, start.x] = true;
+
+        while (q.Count > 0)
         {
-            Debug.Log($"°æ·Î Ã£À½! ±æÀÌ: {solutionPath.Count}");
-            GetComponent<MazeVisualizer>().UpdatePathVisualization();
+            Vector2Int cur = q.Dequeue();
+
+            if (cur == goal)
+            {
+                Debug.Log("BFS: Goal ë„ì°©!");
+                return ReconstructPath(parent);
+            }
+
+            foreach (var d in dirs)
+            {
+                int nx = cur.x + d.x;
+                int ny = cur.y + d.y;
+
+                if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+                if (map[ny, nx] == 1) continue;
+                if (visited[ny, nx]) continue;
+
+                visited[ny, nx] = true;
+                parent[ny, nx] = cur;
+                q.Enqueue(new Vector2Int(nx, ny));
+            }
         }
-        else
+
+        Debug.Log("BFS: ê²½ë¡œ ì—†ìŒ");
+        return null;
+    }
+
+    List<Vector2Int> ReconstructPath(Vector2Int?[,] parent)
+    {
+        List<Vector2Int> path = new List<Vector2Int>();
+        Vector2Int? cur = goal;
+
+        while (cur.HasValue)
         {
-            Debug.Log("°æ·Î¸¦ Ã£À» ¼ö ¾ø½À´Ï´Ù.");
+            path.Add(cur.Value);
+            cur = parent[cur.Value.y, cur.Value.x];
         }
+
+        path.Reverse();
+        Debug.Log($"ê²½ë¡œ ê¸¸ì´: {path.Count}");
+        return path;
     }
 
-    // ¿ÜºÎ¿¡¼­ ¹Ì·Î µ¥ÀÌÅÍ Á¢±Ù¿ë
-    public int GetCell(int x, int y)
+    void DrawMaze()
     {
-        if (x < 0 || y < 0 || x >= mazeWidth || y >= mazeHeight)
-            return 1;
-        return maze[y, x];
+        foreach (Transform child in mazeParent)
+            Destroy(child.gameObject);
+        cellObjects.Clear();
+        pathMarkers.Clear();
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Vector3 pos = new Vector3(x * cellSize, 0, y * cellSize);
+                GameObject cell = Instantiate(cellPrefab, pos, Quaternion.identity, mazeParent);
+                cellObjects[new Vector2Int(x, y)] = cell;
+
+                Renderer renderer = cell.GetComponent<Renderer>();
+
+                if (map[y, x] == 1)
+                {
+                    renderer.material.color = Color.red;
+                    cell.transform.localScale = new Vector3(1, 1, 1);
+                }
+                else
+                {
+                    renderer.material.color = Color.white;
+                    cell.transform.localScale = new Vector3(1, 0.2f, 1);
+                }
+
+                if (x == start.x && y == start.y)
+                    renderer.material.color = Color.cyan;
+
+                if (x == goal.x && y == goal.y)
+                    renderer.material.color = Color.yellow;
+            }
+        }
+
+        CreatePlayer();
     }
 
-    public List<Vector2Int> GetSolutionPath()
+    void CreatePlayer()
     {
-        return solutionPath;
+        if (playerObject != null)
+            Destroy(playerObject);
+
+        Vector3 pos = new Vector3(start.x * cellSize, 0.6f, start.y * cellSize);
+        playerObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        playerObject.transform.position = pos;
+        playerObject.transform.localScale = Vector3.one * 0.7f;
+        playerObject.transform.SetParent(mazeParent);
+        playerObject.GetComponent<Renderer>().material.color = new Color(0.8f, 0.5f, 0.2f);
     }
 
-    public Vector2Int GetStart() => start;
-    public Vector2Int GetGoal() => goal;
-    public int GetWidth() => mazeWidth;
-    public int GetHeight() => mazeHeight;
+    public void ShowShortestPath()
+    {
+        if (shortestPath == null || shortestPath.Count == 0) return;
+
+        // ê¸°ì¡´ ê²½ë¡œ ë§ˆì»¤ ì‚­ì œ
+        foreach (var marker in pathMarkers)
+        {
+            if (marker != null)
+                Destroy(marker);
+        }
+        pathMarkers.Clear();
+
+        // ìµœë‹¨ ê²½ë¡œë¥¼ ì´ˆë¡ìƒ‰ íë¸Œë¡œ í‘œì‹œ (ì‚¬ì§„ì²˜ëŸ¼ ì…ì²´ì ìœ¼ë¡œ)
+        for (int i = 1; i < shortestPath.Count - 1; i++)
+        {
+            Vector2Int pos = shortestPath[i];
+            Vector3 cubePos = new Vector3(pos.x * cellSize, 0.3f, pos.y * cellSize);
+            GameObject pathCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            pathCube.transform.position = cubePos;
+            pathCube.transform.localScale = new Vector3(0.8f, 0.4f, 0.8f);  // ì‚´ì§ ì‘ê³  ë†’ê²Œ
+            pathCube.transform.SetParent(mazeParent);
+            pathCube.GetComponent<Renderer>().material.color = Color.green;
+            pathMarkers.Add(pathCube);
+        }
+
+        Debug.Log("ìµœë‹¨ ê²½ë¡œ ì‹œê°í™” ì™„ë£Œ!");
+    }
+
+    public void AutoMove()
+    {
+        if (shortestPath == null || playerObject == null) return;
+
+        if (moveCoroutine != null)
+        {
+            StopCoroutine(moveCoroutine);
+            moveCoroutine = null;
+        }
+
+        moveCoroutine = StartCoroutine(MovePlayerAlongPath());
+    }
+
+    IEnumerator MovePlayerAlongPath()
+    {
+        autoMoveButton.interactable = false;
+
+        foreach (var pos in shortestPath)
+        {
+            Vector3 targetPos = new Vector3(pos.x * cellSize, 0.6f, pos.y * cellSize);
+            float elapsed = 0f;
+            Vector3 startPos = playerObject.transform.position;
+
+            while (elapsed < moveSpeed)
+            {
+                playerObject.transform.position = Vector3.Lerp(startPos, targetPos, elapsed / moveSpeed);
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+
+            playerObject.transform.position = targetPos;
+        }
+
+        Debug.Log("ëª©í‘œ ì§€ì  ë„ì°©!");
+        moveCoroutine = null;
+        autoMoveButton.interactable = true;
+    }
 }
