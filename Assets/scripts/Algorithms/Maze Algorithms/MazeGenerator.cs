@@ -14,13 +14,19 @@ public class MazeGenerator : MonoBehaviour
     public GameObject cellPrefab;
     public Transform mazeParent;
     public float cellSize = 1f;
-    public float moveSpeed = 0.2f;  // 이동 속도 (Inspector에서 조절)
-    public Camera mainCamera;  // 메인 카메라
+    public float moveSpeed = 0.2f;
+    public Camera mainCamera;
 
     [Header("UI 요소")]
     public Button generateButton;
     public Button showPathButton;
     public Button autoMoveButton;
+
+    // 셀 타입 정의
+    private const int CELL_WALL = 1;
+    private const int CELL_GROUND = 0;
+    private const int CELL_FOREST = 3;
+    private const int CELL_MUD = 5;
 
     private int[,] map;
     private Vector2Int start;
@@ -28,7 +34,7 @@ public class MazeGenerator : MonoBehaviour
     private List<Vector2Int> shortestPath;
     private GameObject playerObject;
     private Dictionary<Vector2Int, GameObject> cellObjects = new Dictionary<Vector2Int, GameObject>();
-    private List<GameObject> pathMarkers = new List<GameObject>();  // 경로 표시 큐브들
+    private List<GameObject> pathMarkers = new List<GameObject>();
     private Coroutine moveCoroutine;
 
     Vector2Int[] dirs = {
@@ -40,7 +46,6 @@ public class MazeGenerator : MonoBehaviour
 
     void Start()
     {
-        // 카메라 자동 찾기
         if (mainCamera == null)
             mainCamera = Camera.main;
 
@@ -54,13 +59,11 @@ public class MazeGenerator : MonoBehaviour
 
     public void GenerateNewMaze()
     {
-        // 이동 중이면 코루틴 중지
         if (moveCoroutine != null)
         {
             StopCoroutine(moveCoroutine);
             moveCoroutine = null;
             autoMoveButton.interactable = true;
-            Debug.Log("플레이어 이동 중지!");
         }
 
         if (width % 2 == 0) width++;
@@ -72,23 +75,31 @@ public class MazeGenerator : MonoBehaviour
         {
             attempts++;
 
+            // 1. 맵 초기화 (모두 벽으로)
             map = new int[height, width];
             for (int y = 0; y < height; y++)
                 for (int x = 0; x < width; x++)
-                    map[y, x] = 1;
+                    map[y, x] = CELL_WALL;
 
-            CreateComplexMaze(1, 1);
-            AddManyRandomPaths();
+            // 2. 재귀적 미로 생성
+            CreateMazeRecursive(1, 1);
 
+            // 3. 랜덤 코스트 추가 (숲, 진흙)
+            AddRandomCosts();
+
+            // 4. 추가 경로 생성
+            AddExtraPaths();
+
+            // 5. 시작/목표 설정
             start = new Vector2Int(1, 1);
             goal = new Vector2Int(width - 2, height - 2);
-            map[start.y, start.x] = 0;
-            map[goal.y, goal.x] = 0;
+            map[start.y, start.x] = CELL_GROUND;
+            map[goal.y, goal.x] = CELL_GROUND;
 
-            if (CanEscape())
+            // 6. DFS로 탈출 가능 여부 확인
+            if (CanEscapeDFS())
             {
                 Debug.Log($"탈출 가능한 미로 생성 완료! ({attempts}회)");
-                shortestPath = FindPathBFS();
                 DrawMaze();
                 AdjustCameraToMaze();
                 showPathButton.interactable = true;
@@ -100,24 +111,11 @@ public class MazeGenerator : MonoBehaviour
         Debug.LogError("미로 생성 실패!");
     }
 
-    void AdjustCameraToMaze()
+    void CreateMazeRecursive(int x, int y)
     {
-        if (mainCamera == null) return;
+        map[y, x] = CELL_GROUND;
 
-        float centerX = (width - 1) * cellSize * 0.5f;
-        float centerZ = (height - 1) * cellSize * 0.5f;
-        float maxSize = Mathf.Max(width, height);
-        float cameraHeight = maxSize * cellSize * 0.8f;
-        float cameraDistance = maxSize * cellSize * 0.6f;
-
-        mainCamera.transform.position = new Vector3(centerX, cameraHeight, centerZ - cameraDistance);
-        mainCamera.transform.LookAt(new Vector3(centerX, 0, centerZ));
-    }
-
-    void CreateComplexMaze(int x, int y)
-    {
-        map[y, x] = 0;
-
+        // 방향 섞기
         List<Vector2Int> directions = new List<Vector2Int>(dirs);
         for (int i = 0; i < directions.Count; i++)
         {
@@ -132,60 +130,49 @@ public class MazeGenerator : MonoBehaviour
             int nx = x + dir.x * 2;
             int ny = y + dir.y * 2;
 
-            if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && map[ny, nx] == 1)
+            if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && map[ny, nx] == CELL_WALL)
             {
-                map[y + dir.y, x + dir.x] = 0;
-                CreateComplexMaze(nx, ny);
+                map[y + dir.y, x + dir.x] = CELL_GROUND;
+                CreateMazeRecursive(nx, ny);
             }
         }
     }
 
-    void AddManyRandomPaths()
+    void AddRandomCosts()
     {
-        int extraPaths = (width * height) / 8;
+        for (int y = 1; y < height - 1; y++)
+        {
+            for (int x = 1; x < width - 1; x++)
+            {
+                if (map[y, x] == CELL_GROUND)
+                {
+                    float r = Random.value;
+                    if (r > 0.91f)
+                        map[y, x] = CELL_MUD;
+                    else if (r > 0.80f)
+                        map[y, x] = CELL_FOREST;
+                }
+            }
+        }
+    }
+
+    void AddExtraPaths()
+    {
+        int extraPaths = (width * height) / 7;
 
         for (int i = 0; i < extraPaths; i++)
         {
             int x = Random.Range(1, width - 1);
             int y = Random.Range(1, height - 1);
 
-            if (map[y, x] == 1)
+            if (map[y, x] == CELL_WALL && Random.value > 0.40f)
             {
-                if (Random.value > 0.3f)
-                {
-                    map[y, x] = 0;
-
-                    if (Random.value > 0.5f)
-                    {
-                        Vector2Int randomDir = dirs[Random.Range(0, dirs.Length)];
-                        int nx = x + randomDir.x;
-                        int ny = y + randomDir.y;
-
-                        if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1)
-                            map[ny, nx] = 0;
-                    }
-                }
-            }
-        }
-
-        for (int y = 2; y < height - 2; y++)
-        {
-            for (int x = 2; x < width - 2; x++)
-            {
-                if (map[y, x] == 0 && Random.value > 0.85f)
-                {
-                    Vector2Int randomDir = dirs[Random.Range(0, dirs.Length)];
-                    int nx = x + randomDir.x;
-                    int ny = y + randomDir.y;
-
-                    if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && map[ny, nx] == 1)
-                        map[ny, nx] = 0;
-                }
+                map[y, x] = CELL_GROUND;
             }
         }
     }
 
-    bool CanEscape()
+    bool CanEscapeDFS()
     {
         bool[,] visited = new bool[height, width];
         return DFS(start.x, start.y, visited);
@@ -195,7 +182,7 @@ public class MazeGenerator : MonoBehaviour
     {
         if (x == goal.x && y == goal.y) return true;
         if (x < 0 || x >= width || y < 0 || y >= height) return false;
-        if (map[y, x] == 1 || visited[y, x]) return false;
+        if (map[y, x] == CELL_WALL || visited[y, x]) return false;
 
         visited[y, x] = true;
 
@@ -206,41 +193,59 @@ public class MazeGenerator : MonoBehaviour
         return false;
     }
 
-    List<Vector2Int> FindPathBFS()
+    // Dijkstra 알고리즘 (우선순위 큐 기반)
+    List<Vector2Int> FindPathDijkstra()
     {
-        bool[,] visited = new bool[height, width];
+        // 거리 배열 초기화
+        float[,] dist = new float[height, width];
         Vector2Int?[,] parent = new Vector2Int?[height, width];
-        Queue<Vector2Int> q = new Queue<Vector2Int>();
 
-        q.Enqueue(start);
-        visited[start.y, start.x] = true;
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                dist[y, x] = float.MaxValue;
 
-        while (q.Count > 0)
+        dist[start.y, start.x] = 0;
+
+        // 우선순위 큐 (간단한 리스트로 구현)
+        List<Node> openList = new List<Node>();
+        openList.Add(new Node(start, 0));
+
+        while (openList.Count > 0)
         {
-            Vector2Int cur = q.Dequeue();
+            // 최소 코스트 노드 찾기
+            openList.Sort((a, b) => a.cost.CompareTo(b.cost));
+            Node current = openList[0];
+            openList.RemoveAt(0);
 
-            if (cur == goal)
+            if (current.pos == goal)
             {
-                Debug.Log("BFS: Goal 도착!");
                 return ReconstructPath(parent);
             }
 
             foreach (var d in dirs)
             {
-                int nx = cur.x + d.x;
-                int ny = cur.y + d.y;
+                int nx = current.pos.x + d.x;
+                int ny = current.pos.y + d.y;
 
                 if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-                if (map[ny, nx] == 1) continue;
-                if (visited[ny, nx]) continue;
 
-                visited[ny, nx] = true;
-                parent[ny, nx] = cur;
-                q.Enqueue(new Vector2Int(nx, ny));
+                int cellType = map[ny, nx];
+                if (cellType == CELL_WALL) continue;
+
+                // 코스트 계산
+                float stepCost = (cellType == CELL_GROUND) ? 1f : cellType;
+                float newDist = dist[current.pos.y, current.pos.x] + stepCost;
+
+                if (newDist < dist[ny, nx])
+                {
+                    dist[ny, nx] = newDist;
+                    parent[ny, nx] = current.pos;
+                    openList.Add(new Node(new Vector2Int(nx, ny), newDist));
+                }
             }
         }
 
-        Debug.Log("BFS: 경로 없음");
+        Debug.Log("Dijkstra: 경로 없음");
         return null;
     }
 
@@ -256,7 +261,7 @@ public class MazeGenerator : MonoBehaviour
         }
 
         path.Reverse();
-        Debug.Log($"경로 길이: {path.Count}");
+        Debug.Log($"Dijkstra 경로 길이: {path.Count}");
         return path;
     }
 
@@ -276,16 +281,27 @@ public class MazeGenerator : MonoBehaviour
                 cellObjects[new Vector2Int(x, y)] = cell;
 
                 Renderer renderer = cell.GetComponent<Renderer>();
+                int cellType = map[y, x];
 
-                if (map[y, x] == 1)
+                if (cellType == CELL_WALL)
                 {
-                    renderer.material.color = Color.red;
+                    renderer.material.color = new Color(0.75f, 0.09f, 0.18f); // 빨강 (벽)
                     cell.transform.localScale = new Vector3(1, 1, 1);
                 }
-                else
+                else if (cellType == CELL_GROUND)
                 {
-                    renderer.material.color = Color.white;
+                    renderer.material.color = Color.white; // 땅
                     cell.transform.localScale = new Vector3(1, 0.2f, 1);
+                }
+                else if (cellType == CELL_FOREST)
+                {
+                    renderer.material.color = new Color(0.13f, 0.50f, 0.55f); // 청록 (숲)
+                    cell.transform.localScale = new Vector3(1, 0.4f, 1);
+                }
+                else if (cellType == CELL_MUD)
+                {
+                    renderer.material.color = new Color(0.66f, 0.29f, 0.18f); // 갈색 (진흙)
+                    cell.transform.localScale = new Vector3(1, 0.3f, 1);
                 }
 
                 if (x == start.x && y == start.y)
@@ -314,7 +330,13 @@ public class MazeGenerator : MonoBehaviour
 
     public void ShowShortestPath()
     {
-        if (shortestPath == null || shortestPath.Count == 0) return;
+        shortestPath = FindPathDijkstra();
+
+        if (shortestPath == null || shortestPath.Count == 0)
+        {
+            Debug.LogWarning("경로를 찾을 수 없습니다!");
+            return;
+        }
 
         // 기존 경로 마커 삭제
         foreach (var marker in pathMarkers)
@@ -324,20 +346,20 @@ public class MazeGenerator : MonoBehaviour
         }
         pathMarkers.Clear();
 
-        // 최단 경로를 초록색 큐브로 표시 (사진처럼 입체적으로)
+        // 최단 경로 시각화
         for (int i = 1; i < shortestPath.Count - 1; i++)
         {
             Vector2Int pos = shortestPath[i];
             Vector3 cubePos = new Vector3(pos.x * cellSize, 0.3f, pos.y * cellSize);
             GameObject pathCube = GameObject.CreatePrimitive(PrimitiveType.Cube);
             pathCube.transform.position = cubePos;
-            pathCube.transform.localScale = new Vector3(0.8f, 0.4f, 0.8f);  // 살짝 작고 높게
+            pathCube.transform.localScale = new Vector3(0.8f, 0.4f, 0.8f);
             pathCube.transform.SetParent(mazeParent);
             pathCube.GetComponent<Renderer>().material.color = Color.green;
             pathMarkers.Add(pathCube);
         }
 
-        Debug.Log("최단 경로 시각화 완료!");
+        Debug.Log("Dijkstra 최단 경로 시각화 완료!");
     }
 
     public void AutoMove()
@@ -376,5 +398,32 @@ public class MazeGenerator : MonoBehaviour
         Debug.Log("목표 지점 도착!");
         moveCoroutine = null;
         autoMoveButton.interactable = true;
+    }
+
+    void AdjustCameraToMaze()
+    {
+        if (mainCamera == null) return;
+
+        float centerX = (width - 1) * cellSize * 0.5f;
+        float centerZ = (height - 1) * cellSize * 0.5f;
+        float maxSize = Mathf.Max(width, height);
+        float cameraHeight = maxSize * cellSize * 0.8f;
+        float cameraDistance = maxSize * cellSize * 0.6f;
+
+        mainCamera.transform.position = new Vector3(centerX, cameraHeight, centerZ - cameraDistance);
+        mainCamera.transform.LookAt(new Vector3(centerX, 0, centerZ));
+    }
+
+    // Dijkstra용 노드 클래스
+    private class Node
+    {
+        public Vector2Int pos;
+        public float cost;
+
+        public Node(Vector2Int p, float c)
+        {
+            pos = p;
+            cost = c;
+        }
     }
 }
