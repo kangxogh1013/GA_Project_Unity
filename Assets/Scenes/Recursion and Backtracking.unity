@@ -538,16 +538,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ed365068804dcc4478695f9edc507a60, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  width: 31
-  height: 31
-  cellPrefab: {fileID: 7327323605378069509, guid: d22285997d80feb40b8dfd4f20683556, type: 3}
-  mazeParent: {fileID: 1231851412}
-  cellSize: 1
-  moveSpeed: 0.1
-  mainCamera: {fileID: 1652871276}
-  generateButton: {fileID: 128117807}
-  showPathButton: {fileID: 1135305420}
-  autoMoveButton: {fileID: 2135290865}
+  mapWidth: 31
+  mapHeight: 31
+  tryCount: 10000
+  wallRate: 0.3
 --- !u!4 &853047164
 Transform:
   m_ObjectHideFlags: 0
